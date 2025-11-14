@@ -1,0 +1,13 @@
+[Unit]
+Description=K3S Autoscaling Service
+After=network.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=root
+ExecStart=python3 /opt/k3s-autoscaling/autoscaling/k3s-autoscaling.py
+
+[Install]
+WantedBy=multi-user.target
