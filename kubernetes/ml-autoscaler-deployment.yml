@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-autoscaler
+  namespace: nexslice
+  labels:
+    app: ml-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-autoscaler
+  template:
+    metadata:
+      labels:
+        app: ml-autoscaler
+    spec:
+      serviceAccountName: ml-autoscaler-sa
+      containers:
+      - name: ml-autoscaler
+        image: python:3.9-slim
+        command:
+        - python3
+        - /app/ml_autoscaler.py
+        volumeMounts:
+        - name: autoscaler-code
+          mountPath: /app
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus:9090"
+        - name: NAMESPACE
+          value: "nexslice"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: autoscaler-code
+        configMap:
+          name: ml-autoscaler-config
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ml-autoscaler-sa
+  namespace: nexslice
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ml-autoscaler-role
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ml-autoscaler-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ml-autoscaler-role
+subjects:
+- kind: ServiceAccount
+  name: ml-autoscaler-sa
+  namespace: nexslice
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-autoscaler-config
+  namespace: nexslice
+data:
+  ml_autoscaler.py: |
+    # Le contenu du fichier ml_autoscaler.py sera inséré ici
+    # lors du déploiement
+  requirements.txt: |
+    prometheus-api-client==1.5.1
+    kubernetes==18.20.0
+    numpy==1.21.0
+    pandas==1.3.0
+    scikit-learn==1.0.2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-autoscaler-metrics
+  namespace: nexslice
+  labels:
+    app: ml-autoscaler
+spec:
+  selector:
+    app: ml-autoscaler
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: metrics

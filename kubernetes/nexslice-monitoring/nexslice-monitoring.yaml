@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-nexslice-config
+  labels:
+    name: prometheus-nexslice-config
+  namespace: monitoring
+data:
+  nexslice-rules.yml: |-
+    groups:
+    - name: nexslice_vnf_alerts
+      rules:
+      - alert: HighVNFLatency
+        expr: probe_duration_seconds{job="blackbox-network"} > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latence réseau élevée détectée"
+          description: "Latence de {{ $value }}s détectée sur {{ $labels.instance }}"
+      
+      - alert: HighVNFCPU
+        expr: rate(container_cpu_usage_seconds_total{pod=~".*smf.*|.*upf.*"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU élevé sur VNF"
+          description: "CPU de {{ $value }}% sur pod {{ $labels.pod }}"
+      
+      - record: nexslice:vnf_cpu_usage_percent
+        expr: rate(container_cpu_usage_seconds_total{pod=~".*smf.*|.*upf.*"}[5m]) * 100
+      
+      - record: nexslice:vnf_memory_usage_percent  
+        expr: container_memory_usage_bytes{pod=~".*smf.*|.*upf.*"} / container_spec_memory_limit_bytes * 100
+      
+      - record: nexslice:network_latency_ms
+        expr: probe_duration_seconds{job="blackbox-network"} * 1000
+      
+      - record: nexslice:total_vnf_pods
+        expr: count(kube_pod_info{namespace="nexslice", pod=~".*smf.*|.*upf.*"})
+      
+      - record: nexslice:network_throughput_mbps
+        expr: rate(container_network_transmit_bytes_total{namespace="nexslice"}[5m]) / 1024 / 1024
+        
+      - record: nexslice:ml_scaling_decision
+        expr: (nexslice:vnf_cpu_usage_percent * 0.3) + (nexslice:vnf_memory_usage_percent * 0.3) + (nexslice:network_latency_ms / 2) + (nexslice:network_throughput_mbps * 0.2)
+
+  blackbox-config.yml: |-
+    modules:
+      icmp_ipv4:
+        prober: icmp
+        timeout: 5s
+        icmp:
+          protocol: "icmp"
+          preferred_ip_protocol: "ip4"
+      
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+          valid_status_codes: []
+          method: GET
+          preferred_ip_protocol: "ip4"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app: blackbox-exporter
+    spec:
+      containers:
+      - name: blackbox-exporter
+        image: prom/blackbox-exporter:latest
+        ports:
+        - containerPort: 9115
+        volumeMounts:
+        - name: blackbox-config
+          mountPath: /config
+        args:
+        - --config.file=/config/blackbox-config.yml
+      volumes:
+      - name: blackbox-config
+        configMap:
+          name: prometheus-nexslice-config
+          items:
+          - key: blackbox-config.yml
+            path: blackbox-config.yml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+spec:
+  selector:
+    app: blackbox-exporter
+  ports:
+  - port: 9115
+    targetPort: 9115
