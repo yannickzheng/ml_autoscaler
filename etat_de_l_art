@@ -1,0 +1,321 @@
+# État de l’art : autoscaling et prédiction de charge pour les VNFs 5G dans Kubernetes
+
+## 1. Introduction
+
+L’architecture 5G introduit une séparation stricte entre le plan de contrôle et le plan utilisateur, et repose largement sur la virtualisation des fonctions réseau (VNFs) et les concepts de cloud natif. Dans ce contexte, les fonctions du cœur 5G telles que la Session Management Function (SMF) et la User Plane Function (UPF) sont typiquement déployées sous forme de microservices conteneurisés, orchestrés par Kubernetes.
+
+L’un des enjeux majeurs est l’**allocation dynamique de ressources** afin de garantir la qualité de service (QoS) et le respect des accords de service (SLA), tout en limitant le sur-provisionnement. Kubernetes propose nativement l’Horizontal Pod Autoscaler (HPA) pour ajuster le nombre de pods en fonction de métriques telles que la consommation CPU ou mémoire. Toutefois, ces mécanismes demeurent essentiellement **réactifs** et peu corrélés aux indicateurs réseau pertinents (débit, latence, charge par slice).
+
+Les travaux récents s’orientent vers des approches d’**autoscaling prédictif**, exploitant des modèles de Machine Learning (ML) et des métriques orientées réseau (par exemple à partir de mesures `ping` et iPerf3) pour anticiper les variations de charge. Dans un environnement comme NexSlice, une plateforme de testbed 5G construite nativement sur Kubernetes, ces approches peuvent être étudiées et comparées au HPA classique.
+
+---
+
+## 2. Autoscaling classique dans Kubernetes
+
+### 2.1. Fonctionnement de l’Horizontal Pod Autoscaler
+
+L’**Horizontal Pod Autoscaler (HPA)** est le mécanisme standard de Kubernetes pour adapter dynamiquement le nombre de pods d’un objet cible (Deployment, ReplicaSet, StatefulSet) en fonction de métriques observées. Le fonctionnement repose sur les éléments suivants :
+
+- **Métriques supportées** :
+  - métriques de ressources : CPU, mémoire (via le Metrics Server),
+  - métriques personnalisées ou externes, si l’écosystème (Prometheus Adapter, etc.) est configuré.
+- **Boucle de contrôle** :
+  - observation périodique des métriques (par défaut toutes les 15 secondes),
+  - calcul d’un ratio entre la métrique observée et la métrique cible définie dans l’objet HPA,
+  - ajustement du nombre de réplicas selon un contrôleur proportionnel, sous contraintes de `minReplicas` et `maxReplicas`.
+
+De manière générale, l’HPA met en œuvre une logique de contrôle **réactive** : l’ajustement du nombre de pods se produit **après** l’évolution de la charge, une fois la dérive observée sur les métriques.
+
+### 2.2. Limites de l’HPA pour des charges réseau 5G
+
+Dans le cas de VNFs 5G telles que SMF et UPF, plusieurs limites de l’HPA apparaissent :
+
+- **Réactivité insuffisante**  
+  La montée en charge réseau (par exemple l’activation massive d’UEs ou de sessions iPerf3) peut être plus rapide que l’intervalle de réaction du HPA. Le scaling intervient alors avec retard, pendant lequel la QoS peut se dégrader (hausse de la latence, pertes de paquets, réduction du débit utile).
+
+- **Métriques peu corrélées à la QoS réseau**  
+  Le HPA se base principalement sur des métriques de type CPU ou mémoire, qui ne reflètent que partiellement :
+  - le **débit agrégé** traité par l’UPF,
+  - la **latence** vue par les UEs,
+  - le **nombre de sessions PDU** ou de tunnels GTP-U actifs.
+  
+  Ainsi, un CPU apparemment peu chargé n’exclut pas l’apparition imminente d’une saturation du plan utilisateur.
+
+- **Risque de sur- ou sous-provisionnement**  
+  - **Sur-provisionnement** : surdimensionnement du nombre de pods, entraînant une utilisation inefficiente des ressources (CPU, mémoire, énergie).
+  - **Sous-provisionnement** : nombre de pods insuffisant face à une charge soudaine, causant une dégradation de la QoS ou des violations de SLA.
+
+- **Manque de prise en compte du slicing**  
+  Dans un environnement 5G avec slices multiples (eMBB, URLLC, etc.), le besoin de ressources peut différer fortement d’un slice à l’autre. L’HPA standard, appliqué à un Deployment, n’intègre pas nativement les contraintes spécifiques de chaque slice ni les métriques par slice.
+
+Ces limitations motivent l’exploration de mécanismes de scaling plus intelligents, intégrant des informations réseau et des modèles prédictifs.
+
+---
+
+## 3. Spécificités de l’autoscaling pour les VNFs 5G (SMF/UPF)
+
+### 3.1. Rôle de SMF et UPF dans le cœur 5G
+
+Dans l’architecture 5G SA (Standalone) basée sur le Service-Based Architecture (SBA), les fonctions SMF et UPF assurent des rôles structurants :
+
+- **SMF (Session Management Function)** :
+  - gestion des sessions PDU des UEs,
+  - allocation des adresses IP UE et des ressources associées,
+  - interaction avec l’UPF pour l’ancrage du trafic utilisateur,
+  - application de politiques de QoS et de routing.
+
+- **UPF (User Plane Function)** :
+  - acheminement du trafic utilisateur (plan utilisateur),
+  - traitement des paquets GTP-U,
+  - application des règles de QoS, filtrage, et traitement des flux par slice ou par DNN.
+
+Ces fonctions sont naturellement sensibles à la **charge réseau** : nombre d’UEs, volume de trafic, nombre de sessions actives, interactions inter-slices, etc.
+
+### 3.2. Contraintes de slicing et de QoS
+
+Dans un contexte 5G, les slices logiques (par exemple eMBB, URLLC, mMTC) sont définis via des identifiants S-NSSAI (SST, SD) et peuvent disposer :
+
+- de **fonctions communes** (AMF, NSSF, AUSF, UDM, UDR),
+- de **fonctions dédiées** par slice, notamment SMF et UPF, comme dans NexSlice.
+
+Les exigences de QoS varient selon le type de slice :
+
+- eMBB : forte demande de débit, tolérance modérée à la latence,
+- URLLC : très forte exigence de latence et de fiabilité,
+- mMTC : grand nombre d’objets, faibles débits unitaires.
+
+L’autoscaling des VNFs doit donc :
+
+- moduler la capacité par slice,
+- garantir des **SLA différenciés**,
+- tenir compte de la corrélation entre ressources allouées et performance observée (latence, pertes, débit minimal).
+
+### 3.3. Importance des métriques de charge réseau
+
+Pour dimensionner correctement les SMF/UPF, les métriques pertinentes sont principalement :
+
+- **indicateurs de latence** :
+  - RTT mesurée via `ping` entre UEs et serveurs distants,
+  - gigue (jitter) éventuelle,
+- **indicateurs de débit** :
+  - débit agrégé mesuré via iPerf3 (client UE vers serveur au cœur),
+  - distribution du trafic (par slice, par UE, par flux),
+- **indicateurs de charge de sessions** :
+  - nombre d’UEs connectés,
+  - nombre de sessions PDU actives,
+  - nombre de tunnels GTP-U et état des files d’attente.
+
+Ces métriques sont plus directement liées à la QoS et à l’état réel du réseau que les seules métriques CPU ou mémoire. Elles constituent donc des entrées naturelles pour des politiques d’autoscaling orientées réseau.
+
+---
+
+## 4. Approches de scaling basées sur les métriques réseau
+
+### 4.1. Sondes actives et passives
+
+Plusieurs travaux de recherche et retours d’expérience industriels préconisent l’utilisation de **sondes actives** et **passives** pour alimenter les décisions d’autoscaling :
+
+- **Sondes actives** :
+  - génération périodique de trafic de test (par exemple `ping` ICMP),
+  - sessions de test iPerf3 pour estimer la capacité utile et détecter la saturation.
+
+- **Sondes passives** :
+  - collecte de statistiques au niveau des VNFs (compteurs de paquets, octets, erreurs),
+  - extraction d’indicateurs depuis les logs applicatifs des fonctions 5G.
+
+Ces données sont généralement collectées dans une base de séries temporelles (par exemple Prometheus), puis visualisées via des tableaux de bord (Grafana).
+
+### 4.2. Stratégies de scaling basées sur seuils
+
+Les approches les plus simples consistent à définir des **seuils** sur les métriques réseau :
+
+- si la latence moyenne dépasse un seuil pendant un certain temps,  
+- si le débit agrégé approche un pourcentage critique de la capacité estimée par pod,
+- si le nombre de sessions PDU dépasse un plafond défini,
+
+alors le système augmente le nombre de réplicas d’UPF/SMF (scale-out). Inversement, une baisse durable de ces métriques conduit à un scale-in.
+
+Ces stratégies présentent plusieurs avantages :
+
+- simplicité de mise en œuvre,
+- interprétabilité (règles claires, faciles à expliquer),
+- compatibilité avec des contrôleurs externes (scripts, opérateurs Kubernetes).
+
+En revanche, elles souffrent de limitations :
+
+- **difficulté de choix des seuils** :
+  - seuils trop élevés ⇒ réaction tardive, risque de dégradation QoS,
+  - seuils trop bas ⇒ oscillations (thrashing) et sur-provisionnement.
+- **absence d’anticipation** :
+  - les décisions sont prises à partir de l’état courant ou très récent,
+  - aucune prévision explicite des variations futures de la charge.
+
+Ces limites motivent l’introduction de techniques prédictives, notamment via le Machine Learning.
+
+---
+
+## 5. Autoscaling prédictif et Machine Learning
+
+### 5.1. Principes généraux de l’autoscaling prédictif
+
+L’**autoscaling prédictif** vise à estimer la charge future à court terme afin de déclencher les actions de scaling **avant** que la saturation ne se manifeste. L’idée centrale est de remplacer une logique purement réactive (déclenchée par dépassement de seuil) par une logique pro-active :
+
+1. collecte d’un **historique de métriques** (CPU, mémoire, débit, latence, nombre de sessions, etc.) ;
+2. apprentissage d’un **modèle de prédiction** capable d’estimer la charge à horizon court (quelques secondes à quelques minutes) ;
+3. traduction de cette prédiction en une **décision de scaling** (augmentation, diminution ou maintien du nombre de pods).
+
+Cette approche permet, en principe, de :
+
+- réduire le risque de sous-provisionnement,
+- limiter les surdimensionnements prolongés en anticipant également les baisses de charge,
+- mieux respecter des contraintes de QoS.
+
+### 5.2. Modèles de prévision de séries temporelles
+
+Un premier ensemble de travaux porte sur l’utilisation de modèles de séries temporelles classiques :
+
+- **ARIMA / SARIMA** :
+  - adaptés aux signaux stationnaires ou faiblement non stationnaires,
+  - efficaces pour des horizons courts lorsqu’une saisonnalité apparaît (périodicité du trafic).
+
+- **Modèles de lissage exponentiel** (Holt-Winters) :
+  - mettent l’accent sur les valeurs récentes,
+  - conviennent aux séries présentant des tendances et des variations modérées.
+
+- **Prophet** :
+  - outil de prévision basé sur une décomposition additif (tendance + saisonnalité + jours spéciaux),
+  - applicable pour des séries de charge présentant des cycles journaliers ou hebdomadaires (cas des réseaux mobiles en production).
+
+Ces modèles prédisent typiquement une valeur agrégée (par exemple le débit prévu à un instant futur) qui est ensuite convertie en nombre de réplicas nécessaires via une règle de dimensionnement.
+
+### 5.3. Modèles supervisés simples pour la décision de scaling
+
+Un autre courant de travaux propose d’utiliser directement des **modèles supervisés** (sans nécessairement modéliser explicitement toute la série temporelle), avec :
+
+- en entrée, un vecteur de caractéristiques décrivant l’état récent du système :
+  - mesures de latence (ping),
+  - débits mesurés (iPerf3),
+  - nombre d’UEs et de sessions,
+  - CPU/mémoire des VNFs,
+  - éventuellement des dérivées (pentes, variations relatives),
+- en sortie :
+  - soit une **prédiction continue** de charge (par exemple débit total ou nombre de sessions futures),
+  - soit directement une **recommandation du nombre de pods** nécessaires.
+
+Les modèles fréquemment employés incluent :
+
+- **régression linéaire** ou régularisée (Ridge, Lasso) ;
+- **arbres de décision et forêts aléatoires (Random Forest)** ;
+- **méthodes de gradient boosting** (XGBoost, LightGBM) ;
+- **petits réseaux de neurones** entièrement connectés.
+
+L’intérêt de ces modèles est qu’ils restent relativement simples à entraîner et à expliquer, tout en capturant des relations non triviales entre les métriques réseau et la capacité nécessaire. Dans le cadre d’un testbed comme NexSlice, un **modèle simple de ML** (régression ou forêt d’arbres) est généralement suffisant pour illustrer les gains potentiels par rapport au HPA.
+
+### 5.4. Approches de contrôle avancé et apprentissage par renforcement
+
+Certaines recherches explorent des approches plus avancées, notamment basées sur l’**apprentissage par renforcement (RL)**, où l’autoscaler est vu comme un agent interagissant avec l’environnement :
+
+- l’agent observe l’état du système (métriques réseau, nombre de pods, etc.) ;
+- choisit une action (scale-in, scale-out, ou maintien) ;
+- reçoit une récompense fonction de la QoS (latence, pertes) et du coût des ressources.
+
+Ces approches permettent potentiellement d’optimiser de manière globale un compromis QoS/ressources, mais restent plus complexes à mettre en œuvre et à valider, en particulier dans un environnement expérimental limité en données. Pour un projet centré sur un **modèle simple de ML prédictif**, il est courant de se limiter à des modèles supervisés ou à de la prévision de séries temporelles.
+
+---
+
+## 6. Plateformes expérimentales 5G cloud natives et NexSlice
+
+### 6.1. Testbeds 5G et cloud natif
+
+Plusieurs plateformes de testbed 5G et de recherche en slicing réseau se sont développées afin de fournir des environnements reproductibles pour l’étude :
+
+- de l’architecture 5G SA,
+- du slicing end-to-end,
+- des mécanismes d’orchestration et d’autoscaling,
+- de l’observabilité et du monitoring.
+
+Ces plateformes reposent en général sur :
+
+- des **cœurs 5G open source** (par exemple OpenAirInterface),
+- des **simulateurs de RAN** (UERANSIM, OAI-RAN),
+- des **technologies cloud natives** (Kubernetes, Helm),
+- des **outils de monitoring** (Prometheus, Grafana),
+- parfois des frameworks d’orchestration de slices (MANO, NFVO).
+
+Elles permettent de générer des scénarios de trafic contrôlés, d’observer finement le comportement des VNFs et de comparer différentes stratégies de gestion des ressources.
+
+### 6.2. NexSlice : un testbed 5G basé sur Kubernetes
+
+NexSlice s’inscrit dans cette lignée en proposant une plateforme **modulaire** et **ouverte** pour l’expérimentation autour du slicing réseau 5G :
+
+- **Infrastructure Kubernetes (K3s)** :
+  - K3s, distribution légère et certifiée Kubernetes, adaptée aux environnements de test et aux ressources modestes,
+  - compatibilité avec les APIs Kubernetes standards et outils associés (kubectl, Helm, Lens).
+
+- **Cœur 5G SA OpenAirInterface** :
+  - déployé via des charts Helm,
+  - architecture SBA complète incluant AMF, SMF, UPF, NSSF, AUSF, UDM, UDR,
+  - possibilité de déployer des instances SMF/UPF dédiées par slice, identifiées par S-NSSAI (SST, SD).
+
+- **RANs supportés** :
+  - RAN OAI disagrégé : CU-CP, CU-UP, DU avec UEs OAI NR,  
+  - simulateur UERANSIM : gNB et UEs simulés, permettant de générer du trafic de manière flexible et scalable.
+
+- **Slicing basé sur S-NSSAI** :
+  - mapping des UEs vers des slices spécifiques (SST, SD),
+  - attribution d’adresses IP et de ressources distinctes par slice,
+  - instanciation de SMF/UPF dédiés par slice, permettant l’étude de l’isolément des performances.
+
+- **Monitoring et observabilité** :
+  - intégration de Prometheus pour la collecte des métriques,
+  - tableaux de bord Grafana pour la visualisation en temps réel (cluster, nodes, pods, VNFs, slices),
+  - compatibilité avec Lens, IDE Kubernetes, pour la gestion et l’exploration des workloads.
+
+NexSlice offre ainsi un environnement particulièrement adapté à l’étude comparée :
+
+- du **HPA Kubernetes classique**, basé sur des métriques CPU/mémoire,
+- d’un **autoscaler personnalisé**, par exemple basé sur des mesures `ping` et iPerf3 pilotées par un modèle de ML prédictif.
+
+### 6.3. Génération de trafic et scénarios d’autoscaling dans NexSlice
+
+NexSlice inclut des mécanismes pour générer du trafic contrôlé et observer l’impact sur les VNFs :
+
+- **Déploiement massif d’UEs UERANSIM** :
+  - possibilité de créer jusqu’à 100 UEs ou plus via un seul pod dédié,
+  - chaque UE peut initier du trafic (ping, iPerf3) vers des serveurs dans le cœur.
+
+- **Scripts de tests intégrés** :
+  - scripts `ping.sh` pour lancer des tests ICMP depuis l’ensemble des UEs,
+  - scripts `iperf.sh` pour générer du trafic TCP/UDP vers un serveur iPerf3 déployé dans le cluster.
+
+- **Autoscaling UPF via HPA** :
+  - la charge générée par iPerf3 peut déclencher un autoscaling de l’UPF, observable dans Grafana, Lens et via la CLI (`kubectl get hpa`),
+  - cela fournit un scénario de référence pour évaluer le comportement du HPA.
+
+Dans ce cadre, l’introduction d’un **autoscaler prédictif basé sur ML**, exploitant les métriques de `ping` et iPerf3 pour prédire la charge à court terme et ajuster le nombre de pods SMF/UPF, permet d’étudier :
+
+- la **réduction du sur-provisionnement** (moins de pods inutilisés),
+- l’**amélioration de la stabilité** du service (latence plus stable, moins de violations de SLA),
+- la **réactivité accrue** par rapport au HPA réactif.
+
+---
+
+## 7. Synthèse
+
+L’état de l’art met en évidence plusieurs éléments clés pour l’autoscaling des VNFs 5G dans un environnement Kubernetes :
+
+1. Les mécanismes natifs d’autoscaling (HPA) reposent essentiellement sur des métriques de ressources (CPU, mémoire) et suivent une logique réactive, qui peut être insuffisante pour des charges réseau fortement dynamiques.
+2. Les fonctions SMF et UPF, critiques pour le plan de contrôle et le plan utilisateur de la 5G, sont principalement sensibles à des métriques **orientées réseau** (latence, débit, nombre de sessions), souvent mal capturées par les métriques standards de Kubernetes.
+3. Les approches basées sur des seuils sur des métriques réseau améliorent la corrélation entre ressources allouées et QoS, mais restent difficiles à calibrer et ne prennent pas en compte la prévision des variations de charge.
+4. L’**autoscaling prédictif** à l’aide de modèles de ML, même simples (régression, forêts d’arbres), permet d’anticiper les fluctuations de charge et de prendre des décisions de scaling plus pertinentes, susceptibles de réduire à la fois le sur-provisionnement et le sous-provisionnement.
+5. Les plateformes de testbeds 5G cloud natives telles que NexSlice fournissent un environnement idéal pour expérimenter et comparer ces approches, grâce à :
+   - l’intégration d’un cœur 5G SA open source (OAI),
+   - le support du slicing par S-NSSAI,
+   - la génération contrôlée de trafic (UERANSIM, iPerf3, ping),
+   - et l’observabilité complète (Prometheus, Grafana).
+
+Dans ce contexte, la mise en œuvre d’un outil d’autoscaling prédictif, basé sur l’analyse en temps réel de la charge réseau (ping, iPerf3) et l’utilisation d’un modèle de ML simple pour prédire la charge à court terme, apparaît comme une extension naturelle de l’état de l’art. Cet outil peut être confronté au HPA de Kubernetes afin de mesurer quantitativement :
+
+- l’efficacité de l’utilisation des ressources (nombre de pods, durée de sur-provisionnement),
+- l’impact sur la stabilité du service (latence, débit, respect de SLA),
+- et la capacité à mieux exploiter la sémantique réseau intrinsèque au contexte 5G et au slicing.
