@@ -172,21 +172,27 @@ Cette approche permet, en principe, de :
 
 ### 5.2. Modèles de prévision de séries temporelles
 
-Un premier ensemble de travaux porte sur l’utilisation de modèles de séries temporelles classiques :
+Dans de nombreux travaux, la charge réseau (par exemple le débit agrégé mesuré par iPerf3, ou la latence moyenne observée par `ping`) est modélisée comme une **série temporelle** : une suite de valeurs mesurées régulièrement au cours du temps.
 
-- **ARIMA / SARIMA** :
-  - adaptés aux signaux stationnaires ou faiblement non stationnaires,
-  - efficaces pour des horizons courts lorsqu’une saisonnalité apparaît (périodicité du trafic).
+L’objectif est alors de **prédire la valeur future** de cette série à court terme, par exemple le débit qui sera observé dans quelques dizaines de secondes. Cette prévision permet d’anticiper les montées en charge au lieu de réagir uniquement lorsqu’elles sont déjà visibles.
 
-- **Modèles de lissage exponentiel** (Holt-Winters) :
-  - mettent l’accent sur les valeurs récentes,
-  - conviennent aux séries présentant des tendances et des variations modérées.
+Plusieurs familles de modèles sont couramment utilisées pour ce type de prévision :
 
-- **Prophet** :
-  - outil de prévision basé sur une décomposition additif (tendance + saisonnalité + jours spéciaux),
-  - applicable pour des séries de charge présentant des cycles journaliers ou hebdomadaires (cas des réseaux mobiles en production).
+- **Modèles ARIMA / SARIMA**  
+  Ils exploitent les corrélations entre les valeurs passées de la série (par exemple les débits mesurés aux instants précédents) pour estimer les valeurs futures. Ils sont adaptés à des signaux relativement réguliers, éventuellement avec des effets de saisonnalité (périodicité du trafic).
 
-Ces modèles prédisent typiquement une valeur agrégée (par exemple le débit prévu à un instant futur) qui est ensuite convertie en nombre de réplicas nécessaires via une règle de dimensionnement.
+- **Modèles de lissage exponentiel** (par exemple Holt–Winters)  
+  Ils donnent davantage de poids aux observations récentes et peuvent capturer des tendances et des variations modérées de la charge dans le temps.
+
+- **Modèles plus récents comme Prophet**  
+  Ils reposent sur une décomposition de la série temporelle en composantes (tendance, saisonnalité, événements particuliers) et sont surtout utilisés pour des environnements de production présentant des cycles journaliers ou hebdomadaires marqués.
+
+Dans tous les cas, ces modèles fournissent une **valeur prédite agrégée** (par exemple le débit total ou la latence moyenne attendue à un instant futur). Cette valeur prédite peut ensuite être convertie en **nombre de réplicas nécessaires** pour une fonction 5G (telle que l’UPF), au moyen d’une règle de dimensionnement simple, par exemple :
+
+- définir une capacité maximale par pod (débit maximal supportable par une instance),
+- calculer `nombre_de_pods = ceil(charge_prévue / capacité_par_pod)`.
+
+Dans le cadre d’un projet d’autoscaling prédictif, il n’est pas nécessaire d’utiliser des modèles complexes : un modèle de prévision simple (par exemple une régression entraînée sur l’historique des mesures) permet déjà d’illustrer le principe général de la prévision de charge et de la conversion en décisions de scaling.
 
 ### 5.3. Modèles supervisés simples pour la décision de scaling
 
