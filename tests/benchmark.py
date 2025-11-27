@@ -269,13 +269,24 @@ spec:
             print("HPA désactivé")
         except Exception as e:
             print(f"Erreur désactivation HPA: {e}")
-    
+
     def start_ml_autoscaler(self):
         """Démarre l'autoscaler ML en arrière-plan"""
         try:
-            # Lance le script ML autoscaler
+            import os
+            # On cherche le fichier par rapport au dossier courant
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # On suppose que benchmark.py est dans /tests/ et le script dans /autoscaling/
+            script_path = os.path.join(current_dir, "..", "autoscaling", "ml_autoscaler.py")
+
+            if not os.path.exists(script_path):
+                # Fallback si on lance depuis la racine
+                script_path = "autoscaling/ml_autoscaler.py"
+
+            print(f"Lancement du script ML: {script_path}")
+
             self.ml_process = subprocess.Popen([
-                "python3", "/Users/as/Documents/Projets/ml-autoscaler/autoscaling/ml_autoscaler.py"
+                "python3", script_path
             ])
             time.sleep(10)  # Temps pour démarrer
             print("Autoscaler ML démarré")
