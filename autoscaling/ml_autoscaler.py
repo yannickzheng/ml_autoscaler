@@ -63,7 +63,7 @@ class TimeSeriesPredictor:
     """Moteur de prédiction ML (Sliding Window + Random Forest)"""
 
     def __init__(self):
-        self.model = RandomForestRegressor(n_estimators=50, n_jobs=-1, random_state=42)
+        self.model = RandomForestRegressor(n_estimators=50, n_jobs=-1, random_state=42) #on crée 50 arbres de décision qui vont voter
         self.scaler = StandardScaler()
         self.history = deque(maxlen=MAX_HISTORY)
         self.is_trained = False
