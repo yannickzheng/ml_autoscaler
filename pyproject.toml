@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ml-autoscaler"
+version = "0.1.0"
+description = "ML-based Kubernetes autoscaler for NexSlice"
+requires-python = ">=3.9"
+dependencies = [
+    "prometheus-api-client>=0.6.0",
+    "kubernetes>=18.20.0",
+    "numpy>=1.24.0",
+    "pandas>=1.5.3",
+    "scikit-learn>=1.2.0",
+    "matplotlib>=3.7.0",
+    "requests",
+    "pyyaml",
+    "urllib3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
