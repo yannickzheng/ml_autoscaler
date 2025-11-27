@@ -18,7 +18,7 @@ check_error() { echo -e "${RED}✗${NC} $1"; }
 errors=0
 warnings=0
 
-echo "🐳 Vérification de K3s/Kubernetes..."
+echo " Vérification de K3s/Kubernetes..."
 
 # Vérification K3s
 if command -v k3s &> /dev/null; then
@@ -104,7 +104,7 @@ else
 fi
 
 # Vérification Python
-echo -e "\n🐍 Vérification de Python..."
+echo -e "\n Vérification de Python..."
 if command -v python3 &> /dev/null; then
     python_version=$(python3 --version | cut -d' ' -f2)
     check_ok "Python3 installé (version $python_version)"
@@ -140,7 +140,7 @@ else
 fi
 
 # Vérification outils réseau
-echo -e "\n🌐 Vérification outils réseau..."
+echo -e "\n Vérification outils réseau..."
 if command -v ping &> /dev/null; then
     check_ok "ping disponible"
 else
@@ -157,7 +157,7 @@ else
 fi
 
 # Vérification ressources système
-echo -e "\n💻 Vérification ressources système..."
+echo -e "\n Vérification ressources système..."
 available_memory=$(free -m 2>/dev/null | awk 'NR==2{printf "%.0f", $7}' || echo "N/A")
 if [ "$available_memory" != "N/A" ]; then
     if [ "$available_memory" -gt 2048 ]; then
@@ -169,7 +169,7 @@ if [ "$available_memory" != "N/A" ]; then
 fi
 
 # Test d'accès réseau externe
-echo -e "\n🌍 Test connectivité Internet..."
+echo -e "\n Test connectivité Internet..."
 if ping -c 1 8.8.8.8 &> /dev/null; then
     check_ok "Connectivité Internet OK"
 else
@@ -178,25 +178,25 @@ else
 fi
 
 # Résumé final
-echo -e "\n📋 RÉSUMÉ DES PRÉREQUIS"
+echo -e "\n RÉSUMÉ DES PRÉREQUIS"
 echo "======================"
 
 if [ $errors -eq 0 ]; then
     if [ $warnings -eq 0 ]; then
-        echo -e "${GREEN}🎉 Tous les prérequis sont satisfaits !${NC}"
+        echo -e "${GREEN} Tous les prérequis sont satisfaits !${NC}"
         echo "   Vous pouvez maintenant installer ML Autoscaler:"
         echo "   ./install.sh"
     else
-        echo -e "${YELLOW}⚠️  Prérequis principaux OK avec $warnings avertissement(s)${NC}"
+        echo -e "${YELLOW}⚠  Prérequis principaux OK avec $warnings avertissement(s)${NC}"
         echo "   Installation possible mais certaines fonctionnalités peuvent être limitées"
         echo "   ./install.sh"
     fi
 else
-    echo -e "${RED}❌ $errors erreur(s) critique(s) détectée(s)${NC}"
+    echo -e "${RED} $errors erreur(s) critique(s) détectée(s)${NC}"
     echo "   Veuillez corriger les erreurs avant l'installation"
     
     if [ "$nexslice_ready" = false ]; then
-        echo -e "\n🎯 ACTIONS REQUISES:"
+        echo -e "\n ACTIONS REQUISES:"
         echo "   1. Déployer NexSlice complet selon la documentation"
         echo "   2. Vérifier que les composants SMF/UPF sont actifs"
         echo "   3. Relancer cette vérification: ./check-prerequisites.sh"
