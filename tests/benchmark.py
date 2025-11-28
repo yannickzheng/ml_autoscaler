@@ -3,16 +3,13 @@
 Script de benchmark pour comparer HPA Kubernetes vs Autoscaler ML
 Collecte les métriques de performance et génère un rapport
 """
-
 import time
 import json
-import csv
 import subprocess
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 import matplotlib.pyplot as plt
 import pandas as pd
-import numpy as np
 from prometheus_api_client import PrometheusConnect
 
 class AutoscalerBenchmark:
