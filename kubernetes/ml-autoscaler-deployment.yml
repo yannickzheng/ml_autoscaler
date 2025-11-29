@@ -26,7 +26,7 @@ spec:
           subPath: requirements.txt
         env:
         - name: PROMETHEUS_URL
-          value: "http://prometheus:9090"
+          value: "http://prometheus-server.monitoring.svc.cluster.local:9090"
         - name: NAMESPACE
           value: "nexslice"
         resources:
@@ -35,7 +35,7 @@ spec:
             cpu: "100m"
           limits:
             memory: "512Mi"
-            cpu: "200m"
+            cpu: "500m"
       volumes:
       - name: autoscaler-code
         configMap:
@@ -59,14 +59,11 @@ rules:
   resources: ["deployments"]
   verbs: ["get", "list", "watch", "patch", "update"]
 - apiGroups: [""]
-  resources: ["pods"]
+  resources: ["pods", "services"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["metrics.k8s.io"]
   resources: ["*"]
   verbs: ["get", "list"]
-- apiGroups: ["autoscaling"]
-  resources: ["horizontalpodautoscalers"]
-  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -84,26 +81,19 @@ subjects:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ml-autoscaler-config
-  namespace: nexslice
-data:
-  ml_autoscaler.py: |
-    # Le contenu du fichier ml_autoscaler.py sera inséré ici
-    # lors du déploiement
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
   name: ml-autoscaler-requirements
   namespace: nexslice
 data:
   requirements.txt: |
-    prometheus-api-client>=0.6.0
-    kubernetes>=18.20.0
-    numpy>=1.24.0
-    pandas>=1.5.3
-    scikit-learn>=1.2.0
-    matplotlib>=3.7.0
+    prometheus-api-client
+    kubernetes
+    numpy
+    pandas
+    scikit-learn
     requests
     pyyaml
     urllib3
+---
+# Le ConfigMap 'ml-autoscaler-config' doit être créé séparément
+# ou via une commande kubectl create configmap --from-file
+# pour inclure le fichier Python complet ci-dessus.
