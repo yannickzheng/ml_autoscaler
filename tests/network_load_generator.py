@@ -1,248 +1,125 @@
 #!/usr/bin/env python3
 """
-Script de test de performance réseau pour déclencher l'autoscaling
-Utilise iPerf3 et ping pour générer de la charge réseau
+Générateur de charge Réseau pour NexSlice (K3s Version)
+Génère du trafic Ping et iPerf3 depuis les UEs vers un serveur.
 """
 
 import subprocess
-import threading
 import time
 import random
 import logging
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Commande K3s
+KUBECTL = "sudo k3s kubectl"
+
+
 class NetworkLoadGenerator:
-    """Générateur de charge réseau pour tester l'autoscaling"""
-    
     def __init__(self, namespace="nexslice"):
         self.namespace = namespace
-        self.iperf_servers = []
-        self.test_duration = 300  # 5 minutes par défaut
-        
+
+    def _run_cmd(self, cmd_str):
+        """Helper pour exécuter des commandes shell"""
+        try:
+            # shell=True permet de gérer 'sudo' et les pipes facilement
+            res = subprocess.run(cmd_str, shell=True, capture_output=True, text=True)
+            return res.stdout.strip(), res.returncode
+        except Exception as e:
+            logger.error(f"Erreur cmd: {e}")
+            return "", 1
+
     def get_ue_pods(self):
-        """Récupère la liste des pods UE disponibles"""
-        try:
-            result = subprocess.run([
-                "kubectl", "get", "pods", "-n", self.namespace,
-                "-l", "app=ueransim-ue", "-o", "jsonpath={.items[*].metadata.name}"
-            ], capture_output=True, text=True)
-            
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip().split()
-            return []
-        except Exception as e:
-            logger.error(f"Erreur récupération pods UE: {e}")
-            return []
-    
+        """Récupère les pods UERANSIM"""
+        # On cherche large : label 'app=ueransim-ue' ou noms contenants 'ueransim-ue'
+        cmd = f"{KUBECTL} get pods -n {self.namespace} --no-headers -o custom-columns=\":metadata.name\""
+        out, _ = self._run_cmd(cmd)
+
+        # Filtre simple en python
+        pods = [p for p in out.split('\n') if 'ueransim-ue' in p or 'nr-ue' in p]
+        return pods
+
     def deploy_iperf_server(self):
-        """Déploie un serveur iPerf3 dans le cluster"""
-        manifest = """
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: iperf3-server
-  namespace: {namespace}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: iperf3-server
-  template:
-    metadata:
-      labels:
-        app: iperf3-server
-    spec:
-      containers:
-      - name: iperf3
-        image: maitaba/iperf3:latest
-        ports:
-        - containerPort: 5201
-        command: ["iperf3"]
-        args: ["-s", "-p", "5201"]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: iperf3-server
-  namespace: {namespace}
-spec:
-  selector:
-    app: iperf3-server
-  ports:
-  - port: 5201
-    targetPort: 5201
-  type: ClusterIP
-        """.format(namespace=self.namespace)
-        
-        try:
-            # Applique le manifest
-            process = subprocess.Popen(['kubectl', 'apply', '-f', '-'], 
-                                     stdin=subprocess.PIPE, 
-                                     stdout=subprocess.PIPE, 
-                                     stderr=subprocess.PIPE, 
-                                     text=True)
-            stdout, stderr = process.communicate(input=manifest)
-            
-            if process.returncode == 0:
-                logger.info("Serveur iPerf3 déployé avec succès")
-                time.sleep(10)  # Attend que le pod soit prêt
-                return True
-            else:
-                logger.error(f"Erreur déploiement serveur iPerf3: {stderr}")
-                return False
-        except Exception as e:
-            logger.error(f"Erreur déploiement serveur: {e}")
-            return False
-    
-    def run_iperf_test(self, ue_pod, server_ip="iperf3-server", duration=60):
-        """Lance un test iPerf3 depuis un pod UE"""
-        try:
-            cmd = [
-                "kubectl", "exec", "-n", self.namespace, ue_pod, "--",
-                "iperf3", "-c", server_ip, "-t", str(duration), "-P", "4"
-            ]
-            
-            logger.info(f"Démarrage test iPerf3 depuis {ue_pod}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration+10)
-            
-            if result.returncode == 0:
-                logger.info(f"Test iPerf3 terminé pour {ue_pod}")
-                return result.stdout
-            else:
-                logger.error(f"Erreur test iPerf3 {ue_pod}: {result.stderr}")
-                return None
-                
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout test iPerf3 pour {ue_pod}")
-            return None
-        except Exception as e:
-            logger.error(f"Erreur test iPerf3 {ue_pod}: {e}")
-            return None
-    
-    def run_ping_test(self, ue_pod, target="8.8.8.8", count=100):
-        """Lance un test ping depuis un pod UE"""
-        try:
-            cmd = [
-                "kubectl", "exec", "-n", self.namespace, ue_pod, "--",
-                "ping", "-c", str(count), "-i", "0.1", target
-            ]
-            
-            logger.info(f"Démarrage test ping depuis {ue_pod}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=count*2)
-            
-            if result.returncode == 0:
-                logger.info(f"Test ping terminé pour {ue_pod}")
-                return result.stdout
-            else:
-                logger.error(f"Erreur test ping {ue_pod}: {result.stderr}")
-                return None
-                
-        except subprocess.TimeoutExpired:
-            logger.warning(f"Timeout test ping pour {ue_pod}")
-            return None
-        except Exception as e:
-            logger.error(f"Erreur test ping {ue_pod}: {e}")
-            return None
-    
-    def generate_gradual_load(self, max_concurrent_tests=10):
-        """Génère une charge graduellement croissante"""
-        logger.info("Démarrage génération de charge graduée")
-        
+        """Déploie le serveur cible"""
+        logger.info("Déploiement du serveur iPerf3...")
+        # On utilise kubectl run pour faire simple et rapide
+        check, _ = self._run_cmd(f"{KUBECTL} get pod iperf3-server -n {self.namespace}")
+
+        if "iperf3-server" not in check:
+            self._run_cmd(f"{KUBECTL} run iperf3-server --image=networkstatic/iperf3 -n {self.namespace} -- -s")
+            self._run_cmd(f"{KUBECTL} expose pod iperf3-server --port=5201 --name=iperf3-server -n {self.namespace}")
+            logger.info("Attente du démarrage serveur (10s)...")
+            time.sleep(10)
+        else:
+            logger.info("Serveur iPerf3 déjà présent.")
+
+    def run_stress_test(self, ue_pod, duration=60):
+        """Lance un stress test depuis un UE"""
+        mode = random.choice(["ping", "iperf"])
+
+        if mode == "ping":
+            # Ping flood (rapide)
+            cmd = f"{KUBECTL} exec -n {self.namespace} {ue_pod} -- ping -c {duration * 2} -i 0.5 8.8.8.8"
+            logger.info(f"🚀 [{ue_pod}] PING Flood vers Internet...")
+        else:
+            # iPerf3 vers le serveur interne
+            # Note: On suppose que le serveur est accessible via le service 'iperf3-server'
+            cmd = f"{KUBECTL} exec -n {self.namespace} {ue_pod} -- iperf3 -c iperf3-server -t {duration} -b 10M"
+            logger.info(f"🔥 [{ue_pod}] iPERF3 Load vers Core...")
+
+        # Exécution (bloquante pour le thread)
+        self._run_cmd(cmd)
+
+    def generate_gradual_load(self, max_concurrent=5):
         ue_pods = self.get_ue_pods()
         if not ue_pods:
-            logger.error("Aucun pod UE trouvé")
+            logger.error("Aucun pod UE trouvé ! Déployez d'abord le RAN.")
             return
-        
-        # Déploie le serveur iPerf3
-        if not self.deploy_iperf_server():
-            logger.error("Impossible de déployer le serveur iPerf3")
-            return
-        
-        # Phase 1: Charge légère (ping seulement)
-        logger.info("Phase 1: Charge légère - tests ping")
-        with ThreadPoolExecutor(max_workers=min(3, len(ue_pods))) as executor:
-            futures = []
-            for i, ue_pod in enumerate(ue_pods[:3]):
-                future = executor.submit(self.run_ping_test, ue_pod, count=50)
-                futures.append(future)
-            
-            for future in futures:
-                future.result()
-        
-        time.sleep(30)
-        
-        # Phase 2: Charge moyenne (ping + quelques iPerf3)
-        logger.info("Phase 2: Charge moyenne - ping + iPerf3")
-        with ThreadPoolExecutor(max_workers=min(5, len(ue_pods))) as executor:
-            futures = []
-            
-            # Tests ping
-            for ue_pod in ue_pods[:3]:
-                future = executor.submit(self.run_ping_test, ue_pod, count=100)
-                futures.append(future)
-            
-            # Tests iPerf3
-            for ue_pod in ue_pods[3:5]:
-                future = executor.submit(self.run_iperf_test, ue_pod, duration=60)
-                futures.append(future)
-            
-            for future in futures:
-                future.result()
-        
-        time.sleep(30)
-        
-        # Phase 3: Charge élevée (tous les tests)
-        logger.info("Phase 3: Charge élevée - tests intensifs")
-        with ThreadPoolExecutor(max_workers=max_concurrent_tests) as executor:
-            futures = []
-            
-            for ue_pod in ue_pods[:max_concurrent_tests]:
-                # Alterne entre ping et iPerf3
-                if random.choice([True, False]):
-                    future = executor.submit(self.run_iperf_test, ue_pod, duration=120)
-                else:
-                    future = executor.submit(self.run_ping_test, ue_pod, count=200)
-                futures.append(future)
-            
-            for future in futures:
-                future.result()
-        
-        logger.info("Génération de charge terminée")
-    
-    def cleanup(self):
-        """Nettoie les ressources de test"""
-        try:
-            subprocess.run([
-                "kubectl", "delete", "deployment,service", 
-                "-n", self.namespace, "-l", "app=iperf3-server"
-            ], capture_output=True)
-            logger.info("Nettoyage des ressources de test terminé")
-        except Exception as e:
-            logger.error(f"Erreur nettoyage: {e}")
 
-def main():
-    """Fonction principale"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Générateur de charge réseau pour NexSlice")
-    parser.add_argument("--namespace", default="nexslice", help="Namespace Kubernetes")
-    parser.add_argument("--max-tests", type=int, default=10, help="Nombre max de tests concurrents")
-    parser.add_argument("--cleanup", action="store_true", help="Nettoie seulement les ressources")
-    
-    args = parser.parse_args()
-    
-    generator = NetworkLoadGenerator(namespace=args.namespace)
-    
-    if args.cleanup:
-        generator.cleanup()
-    else:
-        try:
-            generator.generate_gradual_load(max_concurrent_tests=args.max_tests)
-        finally:
-            generator.cleanup()
+        self.deploy_iperf_server()
+
+        logger.info(f"Début du test de charge sur {len(ue_pods)} UEs...")
+
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            # On lance des tests en boucle
+            start_time = time.time()
+            # On tourne pendant 10 minutes max si appelé directement
+            while time.time() - start_time < 600:
+                futures = []
+                # On choisit des UEs au hasard
+                selected_ues = random.sample(ue_pods, min(len(ue_pods), max_concurrent))
+
+                for ue in selected_ues:
+                    futures.append(executor.submit(self.run_stress_test, ue, duration=45))
+
+                # Attente que cette vague finisse
+                for f in futures:
+                    f.result()
+
+                logger.info("--- Fin de la vague, pause 5s ---")
+                time.sleep(5)
+
+    def cleanup(self):
+        logger.info("Nettoyage des ressources de test...")
+        self._run_cmd(f"{KUBECTL} delete pod iperf3-server -n {self.namespace}")
+        self._run_cmd(f"{KUBECTL} delete svc iperf3-server -n {self.namespace}")
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max-tests", type=int, default=5)
+    parser.add_argument("--cleanup", action="store_true")
+    args = parser.parse_args()
+
+    gen = NetworkLoadGenerator()
+
+    if args.cleanup:
+        gen.cleanup()
+    else:
+        try:
+            gen.generate_gradual_load(max_concurrent=args.max_tests)
+        except KeyboardInterrupt:
+            logger.info("Arrêt utilisateur.")
