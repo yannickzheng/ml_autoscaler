@@ -121,7 +121,7 @@ class Autoscaler:
 
         self.min_replicas = 2
         self.max_replicas = 10
-        self.target_load = 60.0
+        self.target_load = 20.0
         self.last_scale = datetime.min
         self.cooldown_seconds = 45
 
