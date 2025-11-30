@@ -65,7 +65,7 @@ If Ratio > 1.1, we scale out. If Ratio < 0.8, we scale in.
 
 **1. Setup Monitoring (Prometheus + Blackbox)**
 ```bash
-kubectl apply -f kubernetes/nexslice-monitoring.yaml
+kubectl apply -f kubernetes/nexslice-monitoring/nexslice-monitoring.yaml
 kubectl apply -f monitoring/blackbox-probe.yaml
 ```
 
@@ -80,7 +80,7 @@ sudo k3s ctr images import ml-autoscaler.tar
 Update ConfigMap and Deploy:
 ```bash
 kubectl create cm ml-autoscaler-config --from-file=ml_autoscaler.py=autoscaling/ml_autoscaler.py -n nexslice --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f kubernetes/ml-deploy-final.yaml
+kubectl apply -f kubernetes/ml-deployment.yaml
 ```
 
 **3. Run the Benchmark (The "Battle")**
@@ -100,7 +100,7 @@ Run the automated test suite:
 *Terminal 3:*
 ```bash
 cd tests
-sudo ../venv/bin/python3 benchmark.py
+sudo ../.venv/bin/python3 benchmark.py
 ```
 
 ---
