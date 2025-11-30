@@ -14,7 +14,7 @@ This project, **NexSlice AI**, introduces a Machine Learning-based closed-loop a
 
 ### 2.1 The HPA Limitation
 Kubernetes HPA is **reactive**. It follows this logic:
-$$\text{Scale} \iff \text{Current CPU} > \text{Threshold}$$
+$$ \text{Scale} \iff \text{Current CPU} > \text{Threshold} $$
 
 In packet processing workloads (like 5G UPF), modern kernels handle packet forwarding efficiently. A system can suffer from high packet loss and latency (due to buffer saturation) while the application CPU usage remains low (<10%). This phenomenon creates "HPA Blindness".
 
@@ -49,7 +49,7 @@ We chose **Random Forest** over Neural Networks (LSTM) for two reasons:
 
 ### 3.3 Scaling Logic
 The scaler calculates a `Target Ratio`:
-$$\text{Ratio} = \frac{\text{Predicted Load}}{\text{Target Load (e.g., 20\%)}}$$
+$$ \text{Ratio} = \frac{\text{Predicted Load}}{\text{Target Load (e.g., 20\%)}} $$
 If Ratio > 1.1, we scale out. If Ratio < 0.8, we scale in.
 
 ---
@@ -68,65 +68,69 @@ If Ratio > 1.1, we scale out. If Ratio < 0.8, we scale in.
 kubectl apply -f kubernetes/nexslice-monitoring.yaml
 kubectl apply -f monitoring/blackbox-probe.yaml
 ```
-# Build and import the image to K3s
+
+Build and import the image to K3s:
 ```bash
 docker build -t ml-autoscaler:v1 .
 docker save ml-autoscaler:v1 > ml-autoscaler.tar
 sudo k3s ctr images import ml-autoscaler.tar
 ```
-**2. Deploy the AI Autoscaler
-# Update ConfigMap and Deploy
+
+**2. Deploy the AI Autoscaler**
+Update ConfigMap and Deploy:
 ```bash
 kubectl create cm ml-autoscaler-config --from-file=ml_autoscaler.py=autoscaling/ml_autoscaler.py -n nexslice --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f kubernetes/ml-deploy-final.yaml
 ```
-3. Run the Benchmark (The "Battle") Open two terminals for tunneling:
-# Term 1
+
+**3. Run the Benchmark (The "Battle")**
+Open two terminals for tunneling:
+
+*Terminal 1:*
 ```bash
 sudo k3s kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
 ```
-# Term 2 (Optional, for visual check)
+
+*Terminal 2 (Optional, for visual check):*
 ```bash
 sudo k3s kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
 ```
+
 Run the automated test suite:
-# Term 3
+*Terminal 3:*
 ```bash
 cd tests
-sudo ../venv/bin/python3 benchmark.py```
-. Results & Discussion
+sudo ../venv/bin/python3 benchmark.py
+```
+
+---
+
+## 5. Results & Discussion
 We compared standard Kubernetes HPA (CPU-based) against NexSlice AI (Latency-aware) under a high-traffic stress test (Ping Flood + iPerf).
 
-5.1 Grafana Graphical Comparison
+### 5.1 Grafana Graphical Comparison
 The graph below is obtained by fetching Prometheus data.
 
 ![grafana1](images/graphe1.png)
 
-5.2 Analysis
-HPA Failure (The Reactive Approach):
+### 5.2 Analysis
+**HPA Failure (The Reactive Approach):**
+*   **Observation:** During the stress test, Latency spiked to 5000ms+ (Timeout).
+*   **Root Cause:** As seen in the metrics, CPU usage remained low (~1%). Since HPA only monitors CPU, it did not trigger scaling (stayed at 2 pods).
+*   **Impact:** Service unavailability / SLA Breach.
 
-Observation: During the stress test, Latency spiked to 5000ms+ (Timeout).
+**AI Success (The Proactive Approach):**
+*   **Observation:** The AI scaler detected the rise in latency immediately.
+*   **Action:** It scaled the UPF deployment from 2 to 10 replicas rapidly.
+*   **Outcome:** Even though CPU was low, the increased pod count distributed the network load, keeping latency stable around 10-15ms.
 
-Root Cause: As seen in the metrics, CPU usage remained low (~1%). Since HPA only monitors CPU, it did not trigger scaling (stayed at 2 pod).
+---
 
-Impact: Service unavailability / SLA Breach.
-
-AI Success (The Proactive Approach):
-
-Observation: The AI scaler detected the rise in latency immediately.
-
-Action: It scaled the UPF deployment from 2 to 10 replicas rapidly.
-
-Outcome: Even though CPU was low, the increased pod count distributed the network load, keeping latency stable around 10-15ms.
-
-
-6. Conclusion
+## 6. Conclusion
 This project demonstrates that CPU-based autoscaling is insufficient for 5G CNFs. By integrating network metrics (Latency/Throughput) into a Machine Learning loop, NexSlice AI achieved:
 
-Zero-touch scaling based on QoE (Quality of Experience).
-
-SLA Guarantee: Maintained low latency during traffic floods where HPA failed.
-
-Stability: Prevented the "Ping-Pong" effect using a Random Forest regressor.
+*   **Zero-touch scaling** based on QoE (Quality of Experience).
+*   **SLA Guarantee:** Maintained low latency during traffic floods where HPA failed.
+*   **Stability:** Prevented the "Ping-Pong" effect using a Random Forest regressor.
 
 Future work includes testing with LSTM for long-term traffic forecasting.
