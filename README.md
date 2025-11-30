@@ -14,7 +14,7 @@ This project, **NexSlice AI**, introduces a Machine Learning-based closed-loop a
 
 ### 2.1 The HPA Limitation
 Kubernetes HPA is **reactive**. It follows this logic:
-$$ \text{Scale} \iff \text{Current CPU} > \text{Threshold} $$
+$$\text{Scale} \iff \text{Current CPU} > \text{Threshold}$$
 
 In packet processing workloads (like 5G UPF), modern kernels handle packet forwarding efficiently. A system can suffer from high packet loss and latency (due to buffer saturation) while the application CPU usage remains low (<10%). This phenomenon creates "HPA Blindness".
 
