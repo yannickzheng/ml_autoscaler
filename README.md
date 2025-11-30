@@ -67,28 +67,33 @@ If Ratio > 1.1, we scale out. If Ratio < 0.8, we scale in.
 ```bash
 kubectl apply -f kubernetes/nexslice-monitoring.yaml
 kubectl apply -f monitoring/blackbox-probe.yaml
-
+```
 # Build and import the image to K3s
+```bash
 docker build -t ml-autoscaler:v1 .
 docker save ml-autoscaler:v1 > ml-autoscaler.tar
 sudo k3s ctr images import ml-autoscaler.tar
-
+```
 **2. Deploy the AI Autoscaler
 # Update ConfigMap and Deploy
+```bash
 kubectl create cm ml-autoscaler-config --from-file=ml_autoscaler.py=autoscaling/ml_autoscaler.py -n nexslice --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f kubernetes/ml-deploy-final.yaml
-
+```
 3. Run the Benchmark (The "Battle") Open two terminals for tunneling:
 # Term 1
+```bash
 sudo k3s kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+```
 # Term 2 (Optional, for visual check)
+```bash
 sudo k3s kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
-
+```
 Run the automated test suite:
 # Term 3
+```bash
 cd tests
-sudo ../venv/bin/python3 benchmark.py
-
+sudo ../venv/bin/python3 benchmark.py```
 . Results & Discussion
 We compared standard Kubernetes HPA (CPU-based) against NexSlice AI (Latency-aware) under a high-traffic stress test (Ping Flood + iPerf).
 
