@@ -1,0 +1,29 @@
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: nexslice-ping-probe
+  namespace: monitoring
+  labels:
+    # Ce label est CRUCIAL. Il permet à ton Prometheus de "voir" ce fichier.
+    # Vu tes noms de ConfigMap, ton release helm s'appelle probablement "monitoring"
+    release: monitoring
+spec:
+  jobName: blackbox
+  # L'URL de ton service Blackbox (celui que tu as défini dans nexslice-monitoring.yaml)
+  prober:
+    url: blackbox-exporter.monitoring.svc:9115
+  
+  # Le module défini dans ta ConfigMap blackbox-config.yml
+  module: icmp
+  
+  # Fréquence des pings
+  interval: 15s
+  
+  # Les cibles à pinger
+  targets:
+    staticConfig:
+      static:
+      # Cible 1 : Ton UPF (interne au cluster)
+      - oai-upf.nexslice.svc.cluster.local
+      # Cible 2 : Internet (pour comparer)
+      - google.com
