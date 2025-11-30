@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-autoscaler
+  namespace: nexslice
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-autoscaler
+  template:
+    metadata:
+      labels:
+        app: ml-autoscaler
+    spec:
+      serviceAccountName: ml-autoscaler-sa
+      containers:
+      - name: ml-autoscaler
+        image: ml-autoscaler:v1
+        imagePullPolicy: Never        # <--- TRÈS IMPORTANT pour K3s local
+        command: ["python3", "-u", "/app/ml_autoscaler.py"]
+        volumeMounts:
+        - name: autoscaler-code
+          mountPath: /app/ml_autoscaler.py
+          subPath: ml_autoscaler.py
+        env:
+        # Vérifie que ce nom de service est le bon (celui qui a le port 80 ou 9090)
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-server.monitoring.svc.cluster.local:80"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+      volumes:
+      - name: autoscaler-code
+        configMap:
+          name: ml-autoscaler-config

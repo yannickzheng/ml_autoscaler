@@ -193,7 +193,7 @@ spec:
         self.start_ml_autoscaler()
         self.generate_load_background()
 
-        data_ml = self.run_phase("ML", duration_minutes=10)
+        data_ml = self.run_phase("ML", duration_minutes=20)
         all_data.extend(data_ml)
 
         self.stop_ml_autoscaler()
