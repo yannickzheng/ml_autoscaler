@@ -236,7 +236,7 @@ spec:
 
 if __name__ == "__main__":
     # Vérification Port-Forward
-    print("⚠️  AVANT DE LANCER : Assurez-vous d'avoir fait le port-forward Prometheus !")
+    print("⚠  AVANT DE LANCER : Assurez-vous d'avoir fait le port-forward Prometheus !")
     print("   sudo k3s kubectl port-forward -n monitoring svc/prometheus 9090:9090")
     print("   (Laissez tourner cette commande dans un autre terminal)\n")
     time.sleep(3)

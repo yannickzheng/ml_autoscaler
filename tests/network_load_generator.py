@@ -63,12 +63,12 @@ class NetworkLoadGenerator:
         if mode == "ping":
             # Ping flood (rapide)
             cmd = f"{KUBECTL} exec -n {self.namespace} {ue_pod} -- ping -c {duration * 2} -i 0.5 8.8.8.8"
-            logger.info(f"🚀 [{ue_pod}] PING Flood vers Internet...")
+            logger.info(f" [{ue_pod}] PING Flood vers Internet...")
         else:
             # iPerf3 vers le serveur interne
             # Note: On suppose que le serveur est accessible via le service 'iperf3-server'
             cmd = f"{KUBECTL} exec -n {self.namespace} {ue_pod} -- iperf3 -c iperf3-server -t {duration} -b 10M"
-            logger.info(f"🔥 [{ue_pod}] iPERF3 Load vers Core...")
+            logger.info(f" [{ue_pod}] iPERF3 Load vers Core...")
 
         # Exécution (bloquante pour le thread)
         self._run_cmd(cmd)
