@@ -49,7 +49,7 @@ We chose **Random Forest** over Neural Networks (LSTM) for two reasons:
 
 ### 3.3 Scaling Logic
 The scaler calculates a `Target Ratio`:
-$$ \text{Ratio} = \frac{\text{Predicted Load}}{\text{Target Load (e.g., 20\%)}} $$
+$$\text{Ratio} = \frac{\text{Predicted Load}}{\text{Target Load (e.g., 20\%)}}$$
 If Ratio > 1.1, we scale out. If Ratio < 0.8, we scale in.
 
 ---
@@ -116,8 +116,9 @@ The graph below is obtained by fetching Prometheus data.
 ### 5.2 Analysis
 **HPA Failure (The Reactive Approach):**
 *   **Observation:** During the stress test, Latency spiked to 5000ms+ (Timeout).
-*   **Root Cause:** As seen in the metrics, CPU usage remained low (~1%). Since HPA only monitors CPU, it did not trigger scaling (stayed at 2 pods).
+*   **Root Cause:** As seen in the metrics, CPU usage remained low (~1%) while RAM usage increased with time. Since HPA only monitors CPU, it did not trigger scaling (stayed at 2 pods).
 *   **Impact:** Service unavailability / SLA Breach.
+![grafana2](images/cpu_load.png) ![grafana3](images/ram.png)
 
 **AI Success (The Proactive Approach):**
 *   **Observation:** The AI scaler detected the rise in latency immediately.
